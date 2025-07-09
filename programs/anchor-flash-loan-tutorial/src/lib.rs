@@ -10,7 +10,10 @@ use solana_program::sysvar::instructions::{
     };
 use anchor_lang::Discriminator;
 
-declare_id!("4z55dAv3ySKCbDKUwG25cUbCyhNcqG7T5ze9aiYr4wpr");
+// #[cfg(test)]
+// pub mod tests;
+
+declare_id!("22222222222222222222222222222222222222222222");
 
 #[program]
 pub mod flash_loan {
@@ -74,16 +77,14 @@ pub mod flash_loan {
 
         // Check how many instruction we have in this transaction
         let instruction_sysvar = ixs.try_borrow_data()?;
-        let len = instruction_sysvar.len();
+        let len = u16::from_le_bytes(instruction_sysvar[0..2].try_into().unwrap());
 
-        msg!("Number of instructions: {}", len);
-        
         // Ensure we have a finalize ix
-        if let Ok(repay_ix) = load_instruction_at_checked(len-1, &ixs) {
+        if let Ok(repay_ix) = load_instruction_at_checked(len as usize - 1, &ixs) {
 
             // Instruction checks
             require_keys_eq!(repay_ix.program_id, ID, ProtocolError::InvalidProgram);
-            require!(repay_ix.data[0..8].eq(instruction::Repay::DISCRIMINATOR.as_slice()), ProtocolError::InvalidIx);
+            require!(repay_ix.data[0..8].eq(instruction::Repay::DISCRIMINATOR), ProtocolError::InvalidIx);
 
             // We could check the Wallet and Mint seprately but by checking the ATA we do this automatically
             require_keys_eq!(repay_ix.accounts.get(3).ok_or(ProtocolError::InvalidBorrowerAta)?.pubkey, ctx.accounts.borrower_ata.key(), ProtocolError::InvalidBorrowerAta);
@@ -122,7 +123,7 @@ pub mod flash_loan {
 
             // Instruction checks
             require_keys_eq!(repay_ix.program_id, ID, ProtocolError::InvalidProgram);
-            require!(repay_ix.data[0..8].eq(instruction::Borrow::DISCRIMINATOR.as_slice()), ProtocolError::InvalidIx);
+            require!(repay_ix.data[0..8].eq(instruction::Borrow::DISCRIMINATOR), ProtocolError::InvalidIx);
 
             // Check the amount borrowed:
             let mut borrowed_data: [u8;8] = [0u8;8];
@@ -133,8 +134,8 @@ pub mod flash_loan {
             return Err(ProtocolError::MissingBorrowIx.into());
         }
 
-        // Add the fee to the amount borrowed (In our case we hardcoded it to 2%)
-        let fee = amount_borrowed.checked_mul(2).unwrap().checked_div(100).ok_or(ProtocolError::Overflow)?;
+        // Add the fee to the amount borrowed (In our case we hardcoded it to 500 basis point)
+        let fee = (amount_borrowed as u128).checked_mul(500).unwrap().checked_div(10_000).ok_or(ProtocolError::Overflow)? as u64;
         amount_borrowed = amount_borrowed.checked_add(fee).ok_or(ProtocolError::Overflow)?;
 
         // Transfer the funds from the protocol to the borrower
@@ -153,7 +154,6 @@ pub mod flash_loan {
 }
 
 #[derive(Accounts)]
-#[instruction(borrow_amount: u64)]
 pub struct Loan<'info> {
     #[account(mut)]
     pub borrower: Signer<'info>,
@@ -176,7 +176,6 @@ pub struct Loan<'info> {
         mut,
         associated_token::mint = mint,
         associated_token::authority = protocol,
-        constraint = protocol_ata.amount > borrow_amount @ProtocolError::NotEnoughFunds,
     )]
     pub protocol_ata: Account<'info, TokenAccount>,
 
